@@ -1,49 +1,47 @@
-# DAMIAO for ESP-IDF
-MITモードに対応\
-IDF-version: v5.4.4(おそらくv6.xでも使用可能)\
-ESP board: ESP32-WROVER-KIT-3.3v
+# Damiao
 
-# コードの概要
-twai_initによりcanbusを有効化．\
-can通信により，モーターに有効化するデータを送る．
-```c:main.c
- #define TYPE 0
-        #if TYPE == 0
-            dm_transmit_torque(SLAVE_ID, 0.5f, pdMS_TO_TICKS(1));
-        #elif TYPE == 1
-            dm_transmit_mit(SLAVE_ID, 0.0f/*position*/, 0.0f/*velocity*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/ ,pdMS_TO_TICKS(1));
-        #endif
-```
-TYPEを0にすると，トルクのみの信号を送る．mitのtorque以外の部分を0にしたときと同じ挙動．\
-TYPEを1にすると，MIT形式で送る．
-### MIT 制御式
-$$
-\tau = K_p(q_d-q) + K_d(\dot q_d-\dot q) + \tau_{ff}
-$$
+ESP32 Arduino library for Damiao DM Series motors.
 
-## フィードバック
-canからフィードバックを受け取る\
-内容は`dm_feedback_t`として受け取り，モーターの\
-ID，角度(rad)，角速度(rad/s)，トルク(Nm)，状態(enable,disable,undervoltageなど)，モタドラMOSFETの温度(℃)，モーター温度(℃)\
-がわかる．
+## Features
 
-モーターの状態がとりうる値は`main/inc/damiao.h`の`dm_state_t`を参照するといい．
-```c:damio.h
-typedef enum
+- MIT Control
+- Torque Control
+- Enable / Disable
+- Position Initialization
+- Feedback Parsing
+- TWAI(CAN) Support
+
+## Supported Hardware
+
+- ESP32
+- ESP32-S3
+- ESP32-C3 (TWAI supported devices)
+
+## Installation
+
+1. Download ZIP
+2. Arduino IDE
+3. Sketch -> Include Library -> Add .ZIP Library
+
+## Example
+
+```cpp
+#include <Damiao.h>
+
+Damiao motor(0x01);
+
+void setup()
 {
-    DM_STATE_DISABLE         = 0x0,
-    DM_STATE_ENABLE          = 0x1,
+    Serial.begin(115200);
 
-    DM_STATE_OVERVOLTAGE     = 0x8, // 過電圧
-    DM_STATE_UNDERVOLTAGE    = 0x9, // 低電圧
+    Damiao::begin(21,22);
 
-    DM_STATE_OVERCURRENT     = 0xA, // 過電流
+    motor.enable();
+}
 
-    DM_STATE_MOS_OVER_TEMP   = 0xB, // MOS過熱
-    DM_STATE_MOTOR_OVER_TEMP = 0xC, // モータ過熱
+void loop()
+{
+    motor.sendTorque(1.0f);
 
-    DM_STATE_CAN_TIMEOUT     = 0xD, // CAN通信タイムアウト
-    DM_STATE_OVERLOAD        = 0xE, // 過負荷
-
-} dm_state_t;
-```
+    delay(10);
+}
