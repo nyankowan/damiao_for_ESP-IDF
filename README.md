@@ -3,6 +3,9 @@ MITモードに対応\
 IDF-version: v5.4.4(おそらくv6.xでも使用可能)\
 ESP board: ESP32-WROVER-KIT-3.3v
 
+## for Arduino IDE
+ほぼChatGPT製ですが，for_arduinoブランチからダウンロードすればArduino IDEでも使用可能です.
+
 # コードの概要
 twai_initによりcanbusを有効化．\
 can通信により，モーターに有効化するデータを送る．
