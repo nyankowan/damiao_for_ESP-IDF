@@ -1,5 +1,6 @@
 # Damiao
 
+ボードマネージャでesp32 by Espressif Systemsを利用しているなら，バージョン3.3.5以前推奨
 ESP32 Arduino library for Damiao DM Series motors.
 
 ## Features
