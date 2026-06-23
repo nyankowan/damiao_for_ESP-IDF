@@ -1,6 +1,8 @@
 #include "damiao.h"
 #include "driver/twai.h"
+#include "esp_log.h"
 
+#define DAMIAO_TAG "damiao"
 
 esp_err_t dm_transmit(uint16_t can_id, uint8_t *data ,TickType_t ticks_to_wait)
 {
@@ -31,6 +33,18 @@ esp_err_t dm_enable(uint16_t can_id, TickType_t ticks_to_wait)
     return dm_transmit(can_id, enable ,ticks_to_wait);
 }
 
+esp_err_t dm_pos_init(uint16_t can_id, TickType_t ticks_to_wait)
+{
+    uint8_t disable[8] = DM_POS_INIT;
+    return dm_transmit(can_id, disable ,ticks_to_wait);
+}
+
+esp_err_t dm_clear_error(uint16_t can_id, TickType_t ticks_to_wait)
+{
+    uint8_t disable[8] = DM_CLEAR_ERROR;
+    return dm_transmit(can_id, disable ,ticks_to_wait);
+}
+
 esp_err_t dm_disable(uint16_t can_id, TickType_t ticks_to_wait)
 {
     uint8_t disable[8] = DM_DISABLE;
@@ -50,13 +64,15 @@ esp_err_t dm_transmit_torque(uint16_t can_id, float torque, TickType_t ticks_to_
     return dm_transmit(can_id, data ,ticks_to_wait);
 }
 
-esp_err_t dm_receive(uint16_t can_id, dm_feedback_t *fb, TickType_t ticks_to_wait)
+esp_err_t dm_receive(dm_feedback_t *fb, TickType_t ticks_to_wait)
 {
     twai_message_t rx;
     esp_err_t e = twai_receive(&rx, ticks_to_wait);
-    if(e != ESP_OK)return e;
-    if(rx.identifier != can_id)return ESP_FAIL;
-
+    if(e != ESP_OK){
+        ESP_LOGV(DAMIAO_TAG, "receive timeout");
+        return e;
+    }
+    fb->id = rx.identifier;
     uint16_t p_int = ((uint16_t)rx.data[1] << 8) | rx.data[2];
     uint16_t v_int = ((uint16_t)rx.data[3] << 4) | (rx.data[4] >> 4);
     uint16_t t_int = (((uint16_t)rx.data[4] & 0x0F) << 8) | rx.data[5];
@@ -157,16 +173,31 @@ const char *dm_state_to_string(dm_state_t state)
 
 void dump_dm_feedback(dm_feedback_t *fb){
     printf(
+            "rx id=0x%02X "
             "pos=%.3f "
             "vel=%.3f "
             "torque=%.3f "
-            "state=%u"
-            "mos_temp=%3d"
-            "motor_temp=%3d\n",
+            "state=0x%2X "
+            "mos_temp=%3d "
+            "motor_temp=%3d \n",
+            fb->id,
             fb->pos,
             fb->vel,
             fb->torque,
             fb->state,
             fb->mos_temp,
             fb->motor_temp);
+}
+
+void dump_twai_status(){
+    twai_status_info_t status;
+    twai_get_status_info(&status);
+
+    printf(
+        "tx=%ld rx=%ld tx_failed=%ld bus_error=%ld\n",
+        status.msgs_to_tx,
+        status.msgs_to_rx,
+        status.tx_failed_count,
+        status.bus_error_count
+    );
 }
