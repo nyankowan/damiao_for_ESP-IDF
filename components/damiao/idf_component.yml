@@ -1,0 +1,17 @@
+version: "1.0.0"
+description: "DAMIAO motor (MIT mode) driver over TWAI/CAN for ESP-IDF"
+url: "https://github.com/nyankowan/damiao_for_ESP-IDF"
+repository: "https://github.com/nyankowan/damiao_for_ESP-IDF.git"
+repository_info:
+  path: "components/damiao"
+dependencies:
+  idf: ">=5.5"
+files:
+  exclude:
+    - "**/build/**/*"
+    - "**/sdkconfig"
+    - "**/sdkconfig.old"
+    - "**/managed_components/**/*"
+    - "**/dependencies.lock"
+examples:
+  - path: ../../examples/basic
