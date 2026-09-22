@@ -1,8 +1,9 @@
-#include "damiao.h"
-#include "freertos/projdefs.h"
 #include <stdio.h>
-#include "driver/twai.h"
+#include <stdlib.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
+#include "damiao.h"
 
 #define MAIN_TAG "main"
 
@@ -12,13 +13,13 @@
 #define MASTER_ID 0x12
 #define SLAVE_ID 0x02
 
-void main_loop();
+void main_loop(void);
 void error_handle_dm(dm_feedback_t *fb);
 
 void app_main(void)
 {
-    if(twai_init(TWAI_TX,TWAI_RX) != ESP_OK){
-        ESP_LOGE(MAIN_TAG, "twai_init failed");
+    if(dm_twai_init(TWAI_TX,TWAI_RX) != ESP_OK){
+        ESP_LOGE(MAIN_TAG, "dm_twai_init failed");
         exit(-1);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -31,7 +32,7 @@ void app_main(void)
     main_loop();
 }
 
-void main_loop()
+void main_loop(void)
 {
     while (1)
     {
@@ -44,7 +45,7 @@ void main_loop()
 
         dm_feedback_t fb;
         if (dm_receive(&fb, pdMS_TO_TICKS(10)) == ESP_OK){
-            if(fb.id == MASTER_ID) dump_dm_feedback(&fb);
+            if(fb.id == MASTER_ID) dm_dump_feedback(&fb);
             error_handle_dm(&fb);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
