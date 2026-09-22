@@ -31,26 +31,123 @@ damiao_for_ESP-IDF/
 ```
 
 # 使い方
-## 自分のプロジェクトに追加する
-### コンポーネントマネージャ (git) を使う (推奨)
-`main/idf_component.yml` に以下を追加する (無ければ作成する)．ビルド時に自動でダウンロードされる．
+## 自分のプロジェクトに組み込む
+必要なもの
+- ESP-IDF v5.5 以降 (v6 推奨)
+- git (コンポーネントマネージャがダウンロードに使用する)
+
+以下のコマンドはESP-IDFの環境が有効なターミナル (Windowsなら「ESP-IDF PowerShell/CMD」，VS Codeなら `ESP-IDF: Open ESP-IDF Terminal`) で実行する．
+
+### 方法1: コンポーネントマネージャで取り込む (推奨)
+ビルド時にGitHubから自動でダウンロードされる．ファイルのコピーは不要．
+
+#### 1. プロジェクトを用意する
+既存のプロジェクトに組み込む場合は不要．
+```sh
+idf.py create-project my_robot
+cd my_robot
+idf.py set-target esp32
+```
+
+#### 2. 依存を追加する
+プロジェクトのルートで実行する．
+```sh
+idf.py add-dependency --git https://github.com/nyankowan/damiao_for_ESP-IDF.git --git-path components/damiao --git-ref develop nyankowan/damiao
+```
+`main/idf_component.yml` が作成 (または追記) される．手で書いてもよい．
 ```yaml
 dependencies:
   nyankowan/damiao:
     git: https://github.com/nyankowan/damiao_for_ESP-IDF.git
-    path: components/damiao
-    version: develop   # ブランチ/タグ/コミット
+    path: components/damiao   # リポジトリ内のコンポーネントの場所
+    version: develop          # ブランチ/タグ/コミット
 ```
-または
+> `version` にブランチ名を指定すると，`idf.py update-dependencies` を実行したときにそのブランチの最新が取り込まれる．
+> 動作を固定したい場合はタグ (例: `v1.0.0`) やコミットハッシュを指定する．
+
+#### 3. コードを書く
+`main` コンポーネントからは `#include "damiao.h"` するだけで使える (`main/CMakeLists.txt` の変更は不要)．
+```c
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "damiao.h"
+
+#define SLAVE_ID  0x02
+
+void app_main(void)
+{
+    ESP_ERROR_CHECK(dm_twai_init(GPIO_NUM_21, GPIO_NUM_22)); // TX, RX
+    dm_enable(SLAVE_ID, pdMS_TO_TICKS(10));
+
+    while (1) {
+        dm_transmit_mit(SLAVE_ID, 0.0f/*pos*/, 0.0f/*vel*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/, pdMS_TO_TICKS(1));
+
+        dm_feedback_t fb;
+        if (dm_receive(&fb, pdMS_TO_TICKS(10)) == ESP_OK) {
+            dm_dump_feedback(&fb);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+```
+
+#### 4. ビルド・書き込み
 ```sh
-idf.py add-dependency --git https://github.com/nyankowan/damiao_for_ESP-IDF.git --git-ref develop --git-path components/damiao nyankowan/damiao
+idf.py build flash monitor
+```
+初回ビルド時に以下が自動で作られる．
+```
+my_robot/
+├── managed_components/nyankowan__damiao/  ← ダウンロードされたコンポーネント (編集しない．更新時に上書きされる)
+└── dependencies.lock                      ← 解決したバージョンの記録
+```
+`managed_components/` は `.gitignore` に追加してよい．`dependencies.lock` はコミットしておくと全員が同じバージョンでビルドできる．
+
+#### 更新する
+```sh
+idf.py update-dependencies
+```
+`dependencies.lock` がある間はビルドしても自動では更新されないため，最新を取り込むときはこのコマンドを実行する．
+
+### 方法2: 手動でコピーする
+ネットワークを使わずにビルドしたい場合や，コンポーネントをプロジェクト内で改造したい場合．このリポジトリの `components/damiao/` をフォルダごと，自分のプロジェクトの `components/damiao/` にコピーする．
+```
+my_robot/
+├── CMakeLists.txt
+├── components/
+│   └── damiao/        ← コピーしたもの
+└── main/
+```
+プロジェクト直下の `components/` はESP-IDFが自動で探すため，`idf_component.yml` の追加は不要．
+
+### 方法3: 手元のクローンを参照する (ライブラリを修正しながら使う)
+このリポジトリをcloneしておき，`main/idf_component.yml` で場所を指定する．
+cloneしたファイルを直接参照するので，修正がすぐにプロジェクトに反映される．
+```yaml
+dependencies:
+  nyankowan/damiao:
+    version: "*"
+    override_path: "/path/to/damiao_for_ESP-IDF/components/damiao"  # main/ からの相対パスも可
 ```
 
-### 手動でコピーする
-`components/damiao/` ディレクトリを自分のプロジェクトの `components/damiao/` にコピーする．
+### main以外のコンポーネントから使う場合
+使う側のコンポーネントの `CMakeLists.txt` の `REQUIRES` にコンポーネント名を追加する．
+```cmake
+idf_component_register(SRCS "motor_ctrl.c"
+                       INCLUDE_DIRS "."
+                       REQUIRES nyankowan__damiao)   # 方法2の場合は damiao
+```
+| 組み込み方 | コンポーネント名 |
+|---|---|
+| 方法1 (コンポーネントマネージャ) / 方法3 | `nyankowan__damiao` (`/` が `__` になる) |
+| 方法2 (手動コピー) | `damiao` (フォルダ名) |
 
-`main` 以外のコンポーネントから使う場合は，`idf_component_register()` の `REQUIRES` にコンポーネント名
-(コンポーネントマネージャ経由なら `nyankowan__damiao`，手動でコピーした場合は `damiao`) を追加する．
+方法1・3の場合，`idf_component.yml` は `main/` ではなくそのコンポーネントのフォルダに置く．
+
+### 組み込み後の設定
+- CANのビットレートやキュー長: 下記「設定 (menuconfig)」を参照．
+- モーターの範囲 (`DM_P_MAX`, `DM_T_MAX` など) がDM4310のデフォルトと異なる場合: 下記「設定 (menuconfig)」を参照．
+- サンプルと同じく1ms単位で制御したい場合は，プロジェクト直下の `sdkconfig.defaults` に `CONFIG_FREERTOS_HZ=1000` を書く (既に `sdkconfig` がある場合は削除してから再ビルド)．
 
 ## サンプルをビルドする
 ```sh
