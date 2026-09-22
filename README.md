@@ -21,6 +21,7 @@ damiao_for_ESP-IDF/
 │       └── src/damiao.c
 └── examples/
     └── basic/                   ← サンプルプロジェクト
+        ├── .vscode/             ← VS Code (ESP-IDF拡張) 用設定
         ├── CMakeLists.txt
         ├── sdkconfig.defaults
         └── main/
@@ -57,6 +58,12 @@ cd examples/basic
 idf.py set-target esp32
 idf.py build flash monitor
 ```
+
+### VS Code (ESP-IDF拡張) で開く場合
+リポジトリ直下ではなく `examples/basic` フォルダを開く．
+初回は `ESP-IDF: Select Current ESP-IDF Version` で使用するIDF (v6.x) を選択し，
+clangdを使う場合は `ESP-IDF: Configure clangd` を実行する (`clangd.path` などが各自の環境に合わせて設定される)．
+シリアルポートは環境に合わせて `ESP-IDF: Select Port to Use` で変更する．
 
 ## 設定 (menuconfig)
 `idf.py menuconfig` → `Component config` → `DAMIAO motor driver`
