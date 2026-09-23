@@ -1,5 +1,5 @@
 # DAMIAO for ESP-IDF
-DAMIAO製モーターをESP32のTWAI(CAN)から制御するESP-IDFコンポーネント．MITモードに対応\
+DAMIAO製モーターをESP32のTWAI(CAN)から制御するESP-IDFコンポーネント．MITモードに対応．複数モーターの同時制御に対応\
 IDF-version: v5.5 以降 (v6.0 で動作確認)\
 ESP board: ESP32-WROVER-KIT-3.3v
 
@@ -9,14 +9,31 @@ v6.0 で非推奨となった旧ドライバ (`driver/twai.h`) には依存し�
 ## for Arduino IDE
 ほぼChatGPT製ですが，for_arduinoブランチからダウンロードすればArduino IDEでも使用可能です.
 
-# ディレクトリ構成
+# 構成
+2つのコンポーネントからなる．
+```
+main ──→ damiao ──→ can_bus ──→ esp_driver_twai
+  └──────────────────→ can_bus  (他のデバイスや未知フレームの受け取りを登録する場合)
+```
+- **can_bus**: TWAIの送受信を一手に引き受け，受信フレームをCAN IDごとに登録されたハンドラへ配送する．
+  damiaoに依存しないので，同じバスにつながる他のデバイス (センサなど) のドライバもこの上に載せられる．
+  どのハンドラにも一致しなかったフレームはデフォルトハンドラに届くので，情報が捨てられることはない．
+- **damiao**: モーター1台 (MASTER_ID と SLAVE_ID の対) ごとに `dm_motor_t` のインスタンスを作って使う．
+  `dm_motor_init()` で自分のMASTER_IDを can_bus に登録し，フィードバックは受信タスクが自動で更新する．
+
+## ディレクトリ構成
 ```
 damiao_for_ESP-IDF/
 ├── components/
-│   └── damiao/                  ← コンポーネント本体 (これを配布・利用する)
+│   ├── can_bus/                 ← CANバス共通層 (受信フレームの振り分け)
+│   │   ├── CMakeLists.txt
+│   │   ├── idf_component.yml
+│   │   ├── Kconfig              ← menuconfig の "CAN bus dispatcher"
+│   │   ├── include/can_bus.h
+│   │   └── src/can_bus.c
+│   └── damiao/                  ← モータードライバ (can_bus に依存)
 │       ├── CMakeLists.txt
 │       ├── idf_component.yml    ← コンポーネントマネージャ用マニフェスト
-│       ├── Kconfig              ← menuconfig の "DAMIAO motor driver"
 │       ├── include/damiao.h
 │       └── src/damiao.c
 └── examples/
@@ -55,6 +72,7 @@ idf.py set-target esp32
 idf.py add-dependency --git https://github.com/nyankowan/damiao_for_ESP-IDF.git --git-path components/damiao --git-ref develop nyankowan/damiao
 ```
 `main/idf_component.yml` が作成 (または追記) される．手で書いてもよい．
+依存している can_bus も自動で取り込まれる．
 ```yaml
 dependencies:
   nyankowan/damiao:
@@ -72,18 +90,29 @@ dependencies:
 #include "freertos/task.h"
 #include "damiao.h"
 
-#define SLAVE_ID  0x02
+static dm_motor_t s_motor1, s_motor2; // can_busに登録されるのでstaticに置く
 
 void app_main(void)
 {
-    ESP_ERROR_CHECK(dm_twai_init(GPIO_NUM_21, GPIO_NUM_22)); // TX, RX
-    dm_enable(SLAVE_ID, pdMS_TO_TICKS(10));
+    const can_bus_config_t bus_config = CAN_BUS_DEFAULT_CONFIG(GPIO_NUM_21, GPIO_NUM_22); // TX, RX
+    ESP_ERROR_CHECK(can_bus_init(&bus_config));
+
+    // MASTER_ID と SLAVE_ID の対ごとにインスタンスを作る
+    const dm_motor_config_t m1 = { .master_id = 0x11, .slave_id = 0x01, .limits = DM_LIMITS_DEFAULT };
+    const dm_motor_config_t m2 = { .master_id = 0x12, .slave_id = 0x02, .limits = DM_LIMITS_DEFAULT };
+    ESP_ERROR_CHECK(dm_motor_init(&s_motor1, &m1));
+    ESP_ERROR_CHECK(dm_motor_init(&s_motor2, &m2));
+
+    dm_motor_enable(&s_motor1, pdMS_TO_TICKS(10));
+    dm_motor_enable(&s_motor2, pdMS_TO_TICKS(10));
 
     while (1) {
-        dm_transmit_mit(SLAVE_ID, 0.0f/*pos*/, 0.0f/*vel*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/, pdMS_TO_TICKS(1));
+        dm_motor_mit(&s_motor1, 0.0f/*pos*/, 0.0f/*vel*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/, 0);
+        dm_motor_torque(&s_motor2, 0.5f, 0);
 
+        // 受信はcan_busの受信タスクが行うので，最新値を読むだけ
         dm_feedback_t fb;
-        if (dm_receive(&fb, pdMS_TO_TICKS(10)) == ESP_OK) {
+        if (dm_motor_get_feedback(&s_motor1, &fb, NULL) == ESP_OK) {
             dm_dump_feedback(&fb);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -98,7 +127,9 @@ idf.py build flash monitor
 初回ビルド時に以下が自動で作られる．
 ```
 my_robot/
-├── managed_components/nyankowan__damiao/  ← ダウンロードされたコンポーネント (編集しない．更新時に上書きされる)
+├── managed_components/
+│   ├── nyankowan__damiao/                 ← ダウンロードされたコンポーネント (編集しない．更新時に上書きされる)
+│   └── nyankowan__can_bus/
 └── dependencies.lock                      ← 解決したバージョンの記録
 ```
 `managed_components/` は `.gitignore` に追加してよい．`dependencies.lock` はコミットしておくと全員が同じバージョンでビルドできる．
@@ -110,15 +141,24 @@ idf.py update-dependencies
 `dependencies.lock` がある間はビルドしても自動では更新されないため，最新を取り込むときはこのコマンドを実行する．
 
 ### 方法2: 手動でコピーする
-ネットワークを使わずにビルドしたい場合や，コンポーネントをプロジェクト内で改造したい場合．このリポジトリの `components/damiao/` をフォルダごと，自分のプロジェクトの `components/damiao/` にコピーする．
+ネットワークを使わずにビルドしたい場合や，コンポーネントをプロジェクト内で改造したい場合．このリポジトリの `components/can_bus/` と `components/damiao/` をフォルダごと，自分のプロジェクトの `components/` にコピーする．
 ```
 my_robot/
 ├── CMakeLists.txt
 ├── components/
+│   ├── can_bus/       ← コピーしたもの
 │   └── damiao/        ← コピーしたもの
 └── main/
+    └── idf_component.yml
 ```
-プロジェクト直下の `components/` はESP-IDFが自動で探すため，`idf_component.yml` の追加は不要．
+damiao の `idf_component.yml` は can_bus をGitHubから取得するよう書かれているため，
+`main/idf_component.yml` でコピーした can_bus を使うよう指定する (これがないとGitHubからダウンロードしようとする)．
+```yaml
+dependencies:
+  nyankowan/can_bus:
+    version: "*"
+    override_path: "../components/can_bus"
+```
 
 ### 方法3: 手元のクローンを参照する (ライブラリを修正しながら使う)
 このリポジトリをcloneしておき，`main/idf_component.yml` で場所を指定する．
@@ -128,6 +168,9 @@ dependencies:
   nyankowan/damiao:
     version: "*"
     override_path: "/path/to/damiao_for_ESP-IDF/components/damiao"  # main/ からの相対パスも可
+  nyankowan/can_bus:
+    version: "*"
+    override_path: "/path/to/damiao_for_ESP-IDF/components/can_bus"
 ```
 
 ### main以外のコンポーネントから使う場合
@@ -139,14 +182,17 @@ idf_component_register(SRCS "motor_ctrl.c"
 ```
 | 組み込み方 | コンポーネント名 |
 |---|---|
-| 方法1 (コンポーネントマネージャ) / 方法3 | `nyankowan__damiao` (`/` が `__` になる) |
-| 方法2 (手動コピー) | `damiao` (フォルダ名) |
+| 方法1 (コンポーネントマネージャ) | `nyankowan__damiao`, `nyankowan__can_bus` (`/` が `__` になる) |
+| 方法2 (手動コピー) / 方法3 | `damiao`, `can_bus` (フォルダ名) |
+
+damiao を REQUIRES すれば can_bus も使える (`damiao.h` が `can_bus.h` を include している)．
 
 方法1・3の場合，`idf_component.yml` は `main/` ではなくそのコンポーネントのフォルダに置く．
 
 ### 組み込み後の設定
-- CANのビットレートやキュー長: 下記「設定 (menuconfig)」を参照．
-- モーターの範囲 (`DM_P_MAX`, `DM_T_MAX` など) がDM4310のデフォルトと異なる場合: 下記「設定 (menuconfig)」を参照．
+- CANのビットレート: `can_bus_config_t` の `bitrate` で指定する．
+- キュー長や受信タスクの優先度: 下記「設定 (menuconfig)」を参照．
+- モーターの範囲 (PMAX, VMAX, TMAX): 下記「モーターの範囲」を参照．
 - サンプルと同じく1ms単位で制御したい場合は，プロジェクト直下の `sdkconfig.defaults` に `CONFIG_FREERTOS_HZ=1000` を書く (既に `sdkconfig` がある場合は削除してから再ビルド)．
 
 ## サンプルをビルドする
@@ -163,44 +209,60 @@ clangdを使う場合は `ESP-IDF: Configure clangd` を実行する (`clangd.pa
 シリアルポートは環境に合わせて `ESP-IDF: Select Port to Use` で変更する．
 
 ## 設定 (menuconfig)
-`idf.py menuconfig` → `Component config` → `DAMIAO motor driver`
+`idf.py menuconfig` → `Component config` → `CAN bus dispatcher`
 
 | 項目 | デフォルト | 説明 |
 |---|---|---|
-| `CONFIG_DM_TWAI_BITRATE` | 1000000 | CANのビットレート |
-| `CONFIG_DM_TWAI_TX_QUEUE_LEN` | 8 | 送信待ちにできるフレーム数 |
-| `CONFIG_DM_TWAI_RX_QUEUE_LEN` | 16 | `dm_receive()` 前に保持できる受信フレーム数 |
+| `CONFIG_CAN_BUS_TX_QUEUE_LEN` | 8 | 送信待ちにできるフレーム数 |
+| `CONFIG_CAN_BUS_RX_QUEUE_LEN` | 32 | 受信タスクが配送するまで保持できる受信フレーム数 |
+| `CONFIG_CAN_BUS_MAX_HANDLERS` | 16 | 登録できるハンドラの数 (モーター1台につき1つ使う) |
+| `CONFIG_CAN_BUS_RX_TASK_PRIORITY` | 10 | 受信タスクの優先度．制御タスクと同じか少し高めにする |
+| `CONFIG_CAN_BUS_RX_TASK_STACK_SIZE` | 4096 | 受信タスクのスタックサイズ |
 
-位置・速度・ゲイン・トルクの範囲 (`DM_P_MAX`, `DM_V_MAX`, `DM_T_MAX` など) はDM4310のデフォルト値．
-モーター側の設定と異なる場合は，プロジェクトの `CMakeLists.txt` でコンパイルオプションとして上書きする．
-```cmake
-# <project>/CMakeLists.txt
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-idf_build_set_property(COMPILE_DEFINITIONS "DM_T_MAX=10.0f" APPEND)
-idf_build_set_property(COMPILE_DEFINITIONS "DM_T_MIN=-10.0f" APPEND)
-project(my_project)
+受信キューが溢れて破棄されたフレーム数は `can_bus_get_rx_dropped()` や `can_bus_dump_status()` で確認できる．
+
+## モーターの範囲
+位置・速度・トルクの範囲はモーターごとに `dm_limits_t` で指定する．
+モーター側の設定 (PMAX, VMAX, TMAX) と一致している必要がある．`DM_LIMITS_DEFAULT` は P=12.5, V=45, T=18．
+```c
+const dm_motor_config_t config = {
+    .master_id = 0x11,
+    .slave_id  = 0x01,
+    .limits    = { .p_max = 12.5f, .v_max = 30.0f, .t_max = 10.0f },
+};
 ```
 
 # コードの概要
-`dm_twai_init`によりcanbusを有効化．\
-can通信により，モーターに有効化するデータを送る．
+`can_bus_init` でCANバスを有効化し，`dm_motor_init` でモーターごとのインスタンスを作る．
+`dm_motor_enable` でモーターを有効化し，制御ループで指令を送る．
 ```c:main.c
- #define TYPE 0
-        #if TYPE == 0
-            dm_transmit_torque(SLAVE_ID, 0.5f, pdMS_TO_TICKS(1));
-        #elif TYPE == 1
-            dm_transmit_mit(SLAVE_ID, 0.0f/*position*/, 0.0f/*velocity*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/ ,pdMS_TO_TICKS(1));
-        #endif
+dm_motor_torque(&s_motor1, 0.5f, 0);
+dm_motor_mit(&s_motor2, 0.0f/*position*/, 0.0f/*velocity*/, 40.0f/*Kp*/, 3.0f/*Kd*/, 0.0f/*torque*/, 0);
 ```
-TYPEを0にすると，トルクのみの信号を送る．mitのtorque以外の部分を0にしたときと同じ挙動．\
-TYPEを1にすると，MIT形式で送る．
+`dm_motor_torque` はトルクのみの信号を送る．mitのtorque以外の部分を0にしたときと同じ挙動．\
+`dm_motor_mit` はMIT形式で送る．
 ### MIT 制御式
 $$
 \tau = K_p(q_d-q) + K_d(\dot q_d-\dot q) + \tau_{ff}
 $$
 
+## 受信の仕組み
+can_bus の受信タスクが受信フレームを取り出し，登録されたハンドラへ配送する．
+```
+CANバス → TWAI → [受信タスク] → IDが一致するハンドラ (dm_motor_t など)
+                              └→ どれにも一致しない → デフォルトハンドラ
+```
+- `dm_motor_init()` は内部で `can_bus_register(master_id, ...)` を呼ぶ．
+- モーター以外のデバイスは `can_bus_register(id, mask, extd, callback, ctx)` で受信したいIDを登録する．
+  `mask` を使えばID範囲をまとめて受け取れる．複数のハンドラに一致した場合はすべてに配送される．
+- どこにも登録されていないフレームは `can_bus_set_default_handler()` で受け取れる．
+- コールバックは受信タスク上で実行されるので，ブロックする処理や重い処理はしないこと．
+  重い処理はキューなどで別タスクに渡す．
+- 複数のモーターが同じMASTER_IDを使っている場合も，フィードバックの1バイト目 (SLAVE_IDの下位4bit) で区別される．
+
 ## フィードバック
-canからフィードバックを受け取る\
+`dm_motor_get_feedback()` で最新のフィードバックを取得する．どのタスクから呼んでもよい．\
+`age` で最後に受信してからの経過時間がわかるので，通信断の検知に使える．\
 内容は`dm_feedback_t`として受け取り，モーターの\
 ID，角度(rad)，角速度(rad/s)，トルク(Nm)，状態(enable,disable,undervoltageなど)，モタドラMOSFETの温度(℃)，モーター温度(℃)\
 がわかる．
@@ -227,6 +289,25 @@ typedef enum
 ```
 
 # 旧バージョンからの変更点
+## v2.0.0 (複数モーター対応)
+TWAIの送受信を can_bus コンポーネントに分離し，モーターIDを直接渡すAPIを廃止した．
+
+| 旧 | 新 |
+|---|---|
+| `dm_twai_init(tx, rx)` | `can_bus_init(&config)` |
+| `dm_twai_deinit()` / `dm_twai_recover()` | `can_bus_deinit()` / `can_bus_recover()` |
+| `dm_twai_get_node()` | 廃止 |
+| `dm_transmit(can_id, data, wait)` | `can_bus_transmit(&frame, wait)` |
+| `dm_enable(SLAVE_ID, wait)` など | `dm_motor_enable(&motor, wait)` など |
+| `dm_transmit_mit(SLAVE_ID, ...)` | `dm_motor_mit(&motor, ...)` |
+| `dm_transmit_torque(SLAVE_ID, ...)` | `dm_motor_torque(&motor, ...)` |
+| `dm_receive(&fb, wait)` | `dm_motor_get_feedback(&motor, &fb, &age)` |
+| `dm_pack_mit_cmd(data, ...)` | `dm_pack_mit_cmd(data, &limits, ...)` |
+| `dm_dump_twai_status()` | `can_bus_dump_status()` |
+| `DM_P_MAX` などのコンパイルオプション | `dm_motor_config_t` の `limits` (モーターごと) |
+| menuconfig `DAMIAO motor driver` | menuconfig `CAN bus dispatcher` |
+
+## v1.0.0
 | 旧 | 新 |
 |---|---|
 | `twai_init(tx, rx)` | `dm_twai_init(tx, rx)` |
@@ -239,4 +320,3 @@ typedef enum
 
 - 送受信関数はタスクから呼ぶこと (ISRからは不可)．
 - `dm_float_to_uint()` は範囲外の値を飽和させるようになった (以前は隣のフィールドを壊していた)．
-- バスオフからの復帰は `dm_twai_recover()`，TWAIノードを直接操作したい場合は `dm_twai_get_node()` を使う．

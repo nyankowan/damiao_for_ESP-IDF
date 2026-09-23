@@ -1,16 +1,11 @@
-version: "2.0.0"
-description: "DAMIAO motor (MIT mode) driver over TWAI/CAN for ESP-IDF"
+version: "1.0.0"
+description: "TWAI/CAN bus wrapper for ESP-IDF that dispatches received frames to handlers by CAN ID"
 url: "https://github.com/nyankowan/damiao_for_ESP-IDF"
 repository: "https://github.com/nyankowan/damiao_for_ESP-IDF.git"
 repository_info:
-  path: "components/damiao"
+  path: "components/can_bus"
 dependencies:
   idf: ">=5.5"
-  nyankowan/can_bus:
-    git: https://github.com/nyankowan/damiao_for_ESP-IDF.git
-    path: components/can_bus
-    version: develop
-    require: public
 files:
   exclude:
     - "**/build/**/*"
@@ -18,5 +13,3 @@ files:
     - "**/sdkconfig.old"
     - "**/managed_components/**/*"
     - "**/dependencies.lock"
-examples:
-  - path: ../../examples/basic
