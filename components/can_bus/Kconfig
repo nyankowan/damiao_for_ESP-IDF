@@ -1,0 +1,40 @@
+menu "CAN bus dispatcher"
+
+    config CAN_BUS_TX_QUEUE_LEN
+        int "TX queue length"
+        range 1 64
+        default 8
+        help
+            送信待ちにできるフレーム数．
+
+    config CAN_BUS_RX_QUEUE_LEN
+        int "RX queue length"
+        range 1 256
+        default 32
+        help
+            受信タスクが配送するまで保持できる受信フレーム数．
+            満杯の場合，新しく受信したフレームは破棄される (can_bus_get_rx_dropped() で確認できる)．
+
+    config CAN_BUS_MAX_HANDLERS
+        int "Max registered handlers"
+        range 1 64
+        default 16
+        help
+            can_bus_register() で登録できるハンドラの最大数．
+            dm_motor_init() はモーター1台につき1つ使う．
+
+    config CAN_BUS_RX_TASK_PRIORITY
+        int "RX task priority"
+        range 1 24
+        default 10
+        help
+            受信フレームを配送するタスクの優先度．
+            制御タスクと同じか少し高めにする (低いと受信キューが溢れる)．
+
+    config CAN_BUS_RX_TASK_STACK_SIZE
+        int "RX task stack size"
+        default 4096
+        help
+            受信コールバックはこのタスク上で実行される．
+
+endmenu

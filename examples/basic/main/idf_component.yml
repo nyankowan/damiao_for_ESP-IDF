@@ -4,3 +4,6 @@ dependencies:
     # リポジトリ内でビルドする場合はローカルのコンポーネントを使う．
     # レジストリ/他プロジェクトから使う場合は override_path を削除する．
     override_path: "../../../components/damiao"
+  nyankowan/can_bus:
+    version: "*"
+    override_path: "../../../components/can_bus"
